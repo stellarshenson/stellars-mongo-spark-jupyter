@@ -8,8 +8,8 @@ You need to install the following prerequisites:
  * docker and docker compose packages (apt-get install docker docker-compose)
  * docker desktop on Windows
  * verify your docker installaton on Ubuntu using
- ** docker --version
- ** docker-compose --version
+    * docker --version
+    * docker-compose --version
  * execute shell script: ./run.sh
 
 Connect to http://localhost:8888 for jupyter notebook. Authentication has been turned off on purpose
