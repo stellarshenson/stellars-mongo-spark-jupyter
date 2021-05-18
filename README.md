@@ -5,3 +5,6 @@ sources:
 https://towardsdatascience.com/apache-spark-cluster-on-docker-ft-a-juyterlab-interface-418383c95445
 https://github.com/cluster-apps-on-docker/spark-standalone-cluster-on-docker
 https://github.com/RWaltersMA/mongo-spark-jupyter.git
+
+files:
+./data - contains sample database to be loaded to mongo
