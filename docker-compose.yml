@@ -1,32 +1,149 @@
 # ----------------------------------------------------------------------------------------
 # -- Docs: https://github.com/cluster-apps-on-docker/spark-standalone-cluster-on-docker --
+#
+#   Jupyter notebook - http://localhost:8888 
+#   HUE Desktop      - http://localhost:8890
+#   Namenode         - http://localhost:50070
+#   Datanode         - http://localhost:50075
+#   Hive Server      - http://localhost:10000
+#   Spark Master     - http://localhost:8080
+#   Spark Job Mgr    - http://localhost:4040
+#   Hive Server      - http://localhost:10000
+#
+#
 # ----------------------------------------------------------------------------------------
 version: "3.6"
 volumes:
   shared-workspace:
-    name: "hadoop-distributed-file-system"
-    driver: local
   rs1:
+  namenode:
+  datanode:
+  pg_data:
 
 services:
   jupyterlab:
-    #image: andreper/jupyterlab:3.0.0-spark-3.0.0
     image: jupyter/all-spark-notebook
     container_name: jupyterlab
-    #image: stellars/all-spark-notebook
-    #build:
-    #  context: ./build
-    #  dockerfile: jupyterlab.Dockerfile
     environment:
       - JUPYTER_ENABLE_LAB=yes
     ports:
       - 4040:4040
       - 8888:8888
+    working_dir: /opt/workspace
     volumes:
-      - shared-workspace:/opt/workspace
+      - ./work:/opt/workspace
     networks:
       - localnet
     command: start-notebook.sh --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token=
+
+#
+# HADOOP & HIVE
+#
+  namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop2.7.4-java8
+    container_name: hadoop-namenode
+    volumes:
+      - namenode:/hadoop/dfs/name
+    environment:
+      - CLUSTER_NAME=test
+    env_file:
+      - ./hadoop-hive.env
+    ports:
+      - "50070:50070"
+    networks:
+      - localnet
+     
+  datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop2.7.4-java8
+    container_name: hadoop-datanode
+    volumes:
+      - datanode:/hadoop/dfs/data
+    env_file:
+      - ./hadoop-hive.env
+    environment:
+      SERVICE_PRECONDITION: "namenode:50070"
+    ports:
+      - "50075:50075"
+    networks:
+      - localnet
+ 
+  resourcemanager:
+    image: bde2020/hadoop-resourcemanager:2.0.0-hadoop2.7.4-java8
+    container_name: hadoop-resourcemanager
+    environment:
+      SERVICE_PRECONDITION: "namenode:50070 datanode:50075"
+    env_file:
+      - ./hadoop-hive.env
+    networks:
+      - localnet
+ 
+  hive-server:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-server
+    env_file:
+      - ./hadoop-hive.env
+    environment:
+      HIVE_CORE_CONF_javax_jdo_option_ConnectionURL: "jdbc:postgresql://hive-metastore/metastore"
+      SERVICE_PRECONDITION: "hive-metastore:9083"
+    ports:
+      - "10000:10000"
+    networks:
+      - localnet
+ 
+  hive-metastore:
+    image: bde2020/hive:2.3.2-postgresql-metastore
+    container_name: hive-metastore
+    env_file:
+      - ./hadoop-hive.env
+    command: /opt/hive/bin/hive --service metastore
+    environment:
+      SERVICE_PRECONDITION: "namenode:50070 datanode:50075 hive-metastore-postgresql:5432 resourcemanager:8088"
+    ports:
+      - "9083:9083"
+    networks:
+      - localnet
+
+  hive-metastore-postgresql:
+    image: bde2020/hive-metastore-postgresql:2.3.0
+    container_name: hive-metastore-postgresql
+    ports:
+      - "5432:5432"
+    networks:
+      - localnet
+
+  huedb:
+    image: postgres:12.1-alpine
+    container_name: huedb
+    volumes:
+      - pg_data:/var/lib/postgresl/data/
+    ports:
+      - "5432"
+    env_file:
+      - ./hadoop-hive.env
+    environment:
+        SERVICE_PRECONDITION: "namenode:50070 datanode:50075 hive-metastore-postgresql:5432 resourcemanager:8088 hive-metastore:9083"
+    networks:
+      - localnet
+
+  hue:
+    image: gethue/hue:4.6.0
+    container_name: hue
+    environment:
+        SERVICE_PRECONDITION: "namenode:50070 datanode:50075 hive-metastore-postgresql:5432 resourcemanager:8088 hive-metastore:9083 huedb:5000"
+    ports:
+        - "8890:8888"
+    volumes:
+      - ./hue-overrides.ini:/usr/share/hue/desktop/conf/hue-overrides.ini
+    links:
+      - huedb
+    networks:
+      - localnet
+
+
+#
+# SPARK
+# master and two workers
+#
 
   spark-master:
     image: bde2020/spark-master
@@ -69,25 +186,12 @@ services:
     networks:
       - localnet
  
-# Zeppelin notebook runs on localhost:8889
-  zeppelin:
-    image: apache/zeppelin:0.8.0
-    container_name: zeppelin
-    ports:
-      - "8889:8080"
-    volumes:
-      - shared-workspace:/zeppelin/spark
-      - shared-workspace:/zeppelin/notebook
-    environment:
-      - "MASTER=spark://spark-master:7077"
-      - "SPARK_MASTER=spark://spark-master:7077"
-      - "SPARK_HOME=/zeppelin/spark"
-    networks:
-      - localnet
 
-
- # MongoDB deployment and initial setup with Source.bson stocks data
- # Stocsk data is used by the python examples
+#
+# MONGODB
+# MongoDB deployment and initial setup with Source.bson stocks data
+# Stocsk data is used by the python examples
+#
   mongo1:
     image: "mongo:latest"
     container_name: mongo1
@@ -101,12 +205,13 @@ services:
 
   mongo-setup:
     image: "mongo:latest"
+    container_name: mongo-setup
     depends_on:
         - mongo1
     restart: "no"
     entrypoint: [ "bash", "-c", "sleep 10 && mongorestore /opt/data/Source.bson -h mongo1:27017 -d Stocks -c Source --drop "]
     volumes:
-      - ./data:/opt/data
+      - ./data/Source.bson:/opt/data/Source.bson
     networks:
       - localnet
 
